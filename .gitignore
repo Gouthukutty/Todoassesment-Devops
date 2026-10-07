@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+.env.runtime
+*.pem
+*.key
+*.crt
+.DS_Store
+target/
+node_modules/
+build/

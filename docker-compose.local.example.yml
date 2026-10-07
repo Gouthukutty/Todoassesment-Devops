@@ -1,0 +1,2 @@
+# Optional local stack. For production, use AWS RDS and .env.runtime on EC2.
+# Copy to docker-compose.yml only if you want a local containerized DB.
