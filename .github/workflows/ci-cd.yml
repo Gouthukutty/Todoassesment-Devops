@@ -70,6 +70,7 @@ jobs:
         working-directory: Frontend/todo
         env:
           REACT_APP_API_BASE_URL: /api
+          CI: false
         run: npm run build
 
 
