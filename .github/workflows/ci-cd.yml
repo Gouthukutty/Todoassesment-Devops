@@ -1,26 +1,36 @@
-name: Todo Summary Assistant CI/CD
+name: Todo Assessment DevOps CI/CD
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - devops
+
   pull_request:
-    branches: [main]
+    branches:
+      - main
 
 permissions:
   contents: read
 
 env:
   REGISTRY: docker.io
-  BACKEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/todo-summary-backend
-  FRONTEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/todo-summary-frontend
+  BACKEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/todoassessment-backend
+  FRONTEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/todoassessment-frontend
 
 jobs:
+
+  # =========================
+  # BACKEND TEST
+  # =========================
   backend-test:
     name: Backend tests
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout
+      - name: Checkout source code
         uses: actions/checkout@v4
+
       - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
@@ -28,48 +38,69 @@ jobs:
           java-version: '17'
           cache: maven
           cache-dependency-path: Backend/todo-summary-assistant/pom.xml
-      - name: Run Maven tests
-        working-directory: Backend/todo-summary-assistant
-        run: ./mvnw -B test
 
+      - name: Run backend tests
+        working-directory: Backend/todo-summary-assistant
+        run: mvn -B test
+
+
+  # =========================
+  # FRONTEND BUILD
+  # =========================
   frontend-build:
     name: Frontend build
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout
+      - name: Checkout source code
         uses: actions/checkout@v4
-      - name: Set up Node.js
+
+      - name: Set up Node.js 20
         uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: '20'
           cache: npm
           cache-dependency-path: Frontend/todo/package-lock.json
+
       - name: Install dependencies
         working-directory: Frontend/todo
         run: npm ci
+
       - name: Build frontend
         working-directory: Frontend/todo
         env:
           REACT_APP_API_BASE_URL: /api
         run: npm run build
 
+
+  # =========================
+  # DOCKER BUILD & PUSH
+  # =========================
   docker-build-push:
-    name: Build and push images
+    name: Build and push Docker images
     runs-on: ubuntu-latest
-    needs: [backend-test, frontend-build]
+
+    needs:
+      - backend-test
+      - frontend-build
+
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
     steps:
-      - name: Checkout
+      - name: Checkout source code
         uses: actions/checkout@v4
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v4
-      - name: Build and push backend
-        uses: docker/build-push-action@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
         with:
           context: Backend/todo-summary-assistant
           push: true
@@ -78,8 +109,9 @@ jobs:
             ${{ env.BACKEND_IMAGE }}:latest
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
-      - name: Build and push frontend
-        uses: docker/build-push-action@v7
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
         with:
           context: Frontend/todo
           push: true
@@ -91,22 +123,33 @@ jobs:
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
 
+
+  # =========================
+  # EC2 DEPLOYMENT
+  # =========================
   deploy-to-ec2:
     name: Deploy to EC2
     runs-on: ubuntu-latest
-    needs: docker-build-push
+
+    needs:
+      - docker-build-push
+
     steps:
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1
         env:
           IMAGE_TAG: ${{ github.sha }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
+
           envs: IMAGE_TAG,DOCKERHUB_USERNAME
+
           command_timeout: 15m
+
           script: |
             cd /opt/todo-summary-assistant
             ./deploy.sh "$IMAGE_TAG"
