@@ -152,5 +152,5 @@ jobs:
           command_timeout: 15m
 
           script: |
-            cd /opt/todo-summary-assistant
+            cd /home/ubuntu/todolistassesment
             ./deploy.sh "$IMAGE_TAG"
