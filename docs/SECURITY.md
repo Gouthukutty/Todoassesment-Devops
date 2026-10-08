@@ -1,40 +1,47 @@
-# Security
+# Security Controls
 
-## Secrets
+## 1. Secrets
+
+The following must never be committed:
+
+- database passwords
+- AWS access keys
+- SSH private keys
+- Cohere/API keys
+- Slack webhook URLs
+- production `.env` files
 
 Database credentials are stored in AWS Secrets Manager.
 
-Do not commit:
+## 2. IAM
 
-- Database passwords
-- AWS access keys
-- SSH private keys
-- API keys
-- Slack webhook URLs
-- `.env` files containing secrets
+EC2 uses the IAM role `TodoAssessment-EC2-Role` to retrieve the required database secret.
 
-## IAM
+The deployment does not depend on long-lived AWS access keys stored on EC2.
 
-EC2 uses an IAM role instead of static AWS access keys.
+## 3. RDS
 
-The role should have only the permissions required by the deployment.
+- RDS is not publicly accessible.
+- MySQL uses TCP port 3306.
+- The RDS security group accepts database traffic from the EC2 security group.
+- Public `0.0.0.0/0` access to MySQL is not part of the design.
 
-## RDS
+## 4. Containers
 
-- Public accessibility is disabled.
-- MySQL port 3306 is restricted to the EC2 security group.
-- No public `0.0.0.0/0` database access.
+Backend and frontend images use multi-stage builds and non-root runtime users.
 
-## Docker
+Application configuration is externalized through environment variables.
 
-Application images use production-oriented multi-stage builds and non-root runtime users where configured.
+## 5. CI/CD
 
-## Network Exposure
+Docker images are tagged with Git commit SHA values, allowing deployments to be traced to source commits and previous versions to be restored.
 
-The intended public application entry point is Nginx over HTTP/HTTPS.
+GitHub Actions secrets are used for CI/CD credentials such as Docker Hub and EC2 SSH access.
 
-Administrative and monitoring services should be restricted and should not be unnecessarily exposed to the public internet.
+## 6. Network Exposure
 
-## CI/CD
+Nginx is the intended public application entry point.
 
-Docker images are tagged using Git commit SHA so that deployments are traceable and rollback targets are deterministic.
+Monitoring and administrative interfaces should be restricted to trusted access. Grafana is preferably accessed through an SSH tunnel rather than opening it to the public internet.
+
+The final deployment should be reviewed against the actual EC2 security-group rules and Docker port bindings before submission. Documentation should not claim that a port is private unless the host binding and security group actually enforce that restriction.

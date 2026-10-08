@@ -1,66 +1,85 @@
 # Final Repository Checklist
 
-## Application
+## Required Assessment Deliverables
 
-- [ ] Existing application works
-- [ ] No unnecessary business-logic changes
-- [ ] Environment variables documented
+- [x] Backend Dockerfile
+- [x] Backend `.dockerignore`
+- [x] Frontend Dockerfile
+- [x] Frontend `.dockerignore`
+- [x] `.github/workflows/ci-cd.yml`
+- [x] AWS architecture diagram
+- [x] AWS setup documentation
+- [x] Prometheus configuration
+- [x] Prometheus alert rules
+- [x] Grafana dashboard / dashboard evidence
+- [x] `docker-compose.yml`
+- [x] `.env.example`
+- [x] `README.md`
+- [x] `FAILURE_AND_ROLLBACK.md`
+- [x] `MONITORING_AND_OPERATIONS.md`
 
 ## Docker
 
-- [ ] Backend Dockerfile
-- [ ] Frontend Dockerfile
-- [ ] Backend `.dockerignore`
-- [ ] Frontend `.dockerignore`
-- [ ] Non-root runtime
-- [ ] Health checks
+- [x] Multi-stage backend build
+- [x] Multi-stage frontend build
+- [x] Non-root runtime
+- [x] Health checks
+- [x] Environment configuration
 
 ## CI/CD
 
-- [ ] Backend tests
-- [ ] Frontend build
-- [ ] Docker build
-- [ ] SHA image tags
-- [ ] Docker Hub push
-- [ ] EC2 deployment
-- [ ] Deployment health checks
-- [ ] Rollback
+- [x] Push/PR trigger
+- [x] Backend test stage
+- [x] Frontend build stage
+- [x] Docker image build
+- [x] SHA image tags
+- [x] Docker Hub push
+- [x] EC2 deployment
+- [x] Post-deployment health checks
+- [x] Automatic rollback
 
 ## AWS
 
-- [ ] EC2
-- [ ] RDS MySQL
-- [ ] RDS not publicly accessible
-- [ ] RDS SG allows EC2 only
-- [ ] EC2 IAM role
-- [ ] Secrets Manager
-- [ ] No static AWS keys
+- [x] EC2
+- [x] RDS MySQL
+- [x] RDS not publicly accessible
+- [x] RDS access restricted to EC2 security group
+- [x] EC2 IAM role
+- [x] Secrets Manager
+- [x] No static AWS credentials required by EC2
 
 ## Monitoring
 
-- [ ] Prometheus
-- [ ] Grafana
-- [ ] Node Exporter
-- [ ] cAdvisor
-- [ ] Request rate
-- [ ] Error rate
-- [ ] Latency
-- [ ] CPU
-- [ ] Memory
-- [ ] Disk
-- [ ] Uptime
-- [ ] Container restart/uptime
-- [ ] Backend-down alert
-- [ ] High CPU alert
+- [x] Prometheus
+- [x] Grafana
+- [x] Node Exporter
+- [x] cAdvisor included
+- [x] Request rate
+- [x] Error rate
+- [x] CPU
+- [x] Memory
+- [x] Disk
+- [x] Backend availability
+- [x] Backend Down alert
+- [x] High CPU alert
+- [x] JVM/application metrics
+- [~] Latency: average latency is available; P95 is not available without histogram buckets
+- [~] Container-level metrics: cAdvisor is limited by current host runtime
 
-## Documentation
+## Final Security Review
 
-- [ ] AWS architecture
-- [ ] Architecture diagram
-- [ ] Deployment
-- [ ] Monitoring and operations
-- [ ] Failure and rollback
-- [ ] Security
-- [ ] Testing
-- [ ] Troubleshooting
-- [ ] Project status
+- [ ] `.env` is not tracked by Git.
+- [ ] No real secrets are present in repository files/history.
+- [ ] SSH access is restricted appropriately.
+- [ ] Monitoring ports are restricted appropriately.
+- [ ] Backend/frontend Docker host ports are not unnecessarily public.
+- [ ] RDS 3306 remains restricted to the EC2 security group.
+
+## Final Submission Review
+
+- [ ] Run final `git status --short`.
+- [ ] Run a repository secret scan.
+- [ ] Run final CI/CD pipeline.
+- [ ] Capture final AWS/monitoring screenshots.
+- [ ] Confirm the architecture diagram matches the deployed system.
+- [ ] Confirm all documentation describes the actual environment.

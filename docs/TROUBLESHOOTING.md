@@ -1,18 +1,12 @@
-# Troubleshooting
+# Troubleshooting Guide
 
-## Backend Has No Database Password
+## Backend Authentication Error: `using password: NO`
 
-Symptom:
+### Cause
 
-```text
-Access denied ... (using password: NO)
-```
+The backend was started without the environment variables injected by `deploy.sh`.
 
-Cause:
-
-The backend was started without the credential injection performed by `deploy.sh`.
-
-Solution:
+### Recovery
 
 ```bash
 cd /home/ubuntu/todolistassesment
@@ -21,25 +15,22 @@ cd /home/ubuntu/todolistassesment
 
 ## Backend Health Check Fails
 
-Check:
-
 ```bash
 docker compose ps
 docker compose logs --tail=100 backend
 curl http://127.0.0.1:8081/actuator/health
 ```
 
-Then verify:
+Then check:
 
 - RDS availability
-- database endpoint
-- security group
+- RDS endpoint
+- security-group connectivity
 - Secrets Manager
 - IAM role
+- database credentials
 
 ## Frontend Health Check Fails
-
-Check:
 
 ```bash
 docker compose ps
@@ -49,24 +40,25 @@ curl http://127.0.0.1:3000/health
 
 ## Nginx Problems
 
-Check:
-
 ```bash
 sudo nginx -t
 sudo nginx -T
 sudo systemctl status nginx
 ```
 
-Look for duplicate/conflicting server blocks.
+Check for:
 
-## Grafana Is Not Accessible
+- duplicate server blocks
+- wrong upstream ports
+- syntax errors
+- failed reloads
 
-Do not immediately open Grafana to the entire internet.
+## Grafana Access
 
-Preferred method:
+Prefer an SSH tunnel rather than exposing Grafana publicly:
 
 ```bash
-ssh -i YOUR_KEY.pem -L 3001:localhost:3001 ubuntu@EC2_HOST
+ssh -i YOUR_KEY.pem -L 3001:127.0.0.1:3001 ubuntu@EC2_HOST
 ```
 
 Then open:
@@ -75,20 +67,18 @@ Then open:
 http://localhost:3001
 ```
 
-## Prometheus Has No Application Metrics
+## Prometheus Has No Backend Metrics
 
-Check:
+Check the backend endpoint:
 
 ```bash
 curl http://127.0.0.1:8081/actuator/prometheus
 ```
 
-Then inspect the Prometheus target configuration.
+Then verify the Prometheus target and configuration.
 
-## cAdvisor Has No Container Metrics
+## cAdvisor Metrics Are Incomplete
 
-Verify the Docker runtime and cAdvisor compatibility.
+cAdvisor is included and scraped, but the current EC2 Docker environment can report overlayfs layer-identification errors. Do not interpret missing per-container series as proof that Prometheus itself is broken.
 
-Do not change the Docker storage driver solely to force cAdvisor to work without evaluating the impact.
-
-Use verified Spring Boot and Node Exporter metrics for monitoring that does not depend on cAdvisor.
+Use Spring Boot and Node Exporter metrics for the verified application/host monitoring signals.

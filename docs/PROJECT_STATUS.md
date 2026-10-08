@@ -1,59 +1,44 @@
 # Project Status
 
-## Completed / Implemented
+## Implemented and Verified
 
-- [x] Dockerized backend
-- [x] Dockerized frontend
-- [x] Multi-stage application images
-- [x] Health endpoints/checks
-- [x] Environment-based configuration
+- [x] Backend Dockerfile with multi-stage build
+- [x] Frontend Dockerfile with multi-stage build
+- [x] Non-root runtime configuration
+- [x] Environment-based application configuration
+- [x] Backend/frontend health endpoints
 - [x] GitHub Actions CI/CD
-- [x] Docker image versioning
 - [x] Docker Hub image publishing
+- [x] Git commit SHA image tagging
 - [x] EC2 deployment
-- [x] AWS RDS MySQL
+- [x] RDS MySQL deployment
 - [x] RDS public access disabled
-- [x] RDS security-group restriction
-- [x] EC2 IAM role
-- [x] AWS Secrets Manager
+- [x] RDS security-group restriction to EC2
+- [x] EC2 IAM role for Secrets Manager
 - [x] Deployment-time secret retrieval
 - [x] Automatic rollback logic
+- [x] Controlled automatic rollback test
 - [x] Prometheus
 - [x] Grafana
 - [x] Node Exporter
-- [x] cAdvisor included
-- [x] Backend-down alert tested
+- [x] cAdvisor included and scraped
+- [x] Backend Down alert tested
+- [x] High CPU alert configured
+- [x] Nginx syntax/routing reviewed
 
-## Requires Final Verification
+## Known Limitations / Final Review Items
 
-- [ ] Final architecture diagram matches the deployed environment
-- [ ] Final Nginx routing reviewed with `nginx -T`
-- [ ] P95 latency metric verified and added to dashboard if available
-- [ ] Container restart/uptime metric verified
-- [ ] High CPU alert test
-- [ ] Controlled rollback test
-- [ ] Final security-group review
-- [ ] Final CI/CD run after all documentation/configuration changes
-- [ ] Final README review
-- [ ] Final repository secret scan
+- [ ] P95 latency is not claimed because histogram bucket metrics are not exposed. Average latency can be calculated from request sum/count.
+- [ ] cAdvisor has host-runtime limitations for some per-container metrics.
+- [ ] Final EC2 security-group screenshots should match the actual current rules.
+- [ ] Docker host port bindings should be reviewed and hardened so only intended public services are externally reachable.
+- [ ] Final repository secret scan should be completed before submission.
+- [ ] Final CI/CD run should be performed after any last repository changes.
 
-## Known Monitoring Limitation
+## Important Verified Rollback Result
 
-cAdvisor is included, but container-specific metrics must be verified against the EC2 Docker runtime before being presented as a working source of container restart metrics.
+A controlled deployment health-check failure triggered automatic rollback. The previous image version was restored and both backend/frontend rollback health checks passed.
 
-## Documentation Structure
+## Current Deployment Tag
 
-```text
-aws/
-  aws-setup.md
-  architecture-diagram.png
-
-docs/
-  DEPLOYMENT.md
-  MONITORING_AND_OPERATIONS.md
-  FAILURE_AND_ROLLBACK.md
-  SECURITY.md
-  TESTING.md
-  TROUBLESHOOTING.md
-  PROJECT_STATUS.md
-```
+The successful deployment tested during the assessment was identified by Git commit SHA. The live `.current_tag` on EC2 should be treated as the authoritative current value.

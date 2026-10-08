@@ -1,648 +1,151 @@
 # Monitoring and Operations
 
-## 1. Monitoring Overview
+## 1. Monitoring Stack
 
-The application is monitored using Prometheus and Grafana.
+The monitoring stack runs on EC2:
 
-The monitoring setup collects information about:
+- Prometheus — metric collection and rule evaluation.
+- Grafana — dashboards and alerting.
+- Node Exporter — EC2 host metrics.
+- cAdvisor — container metrics where supported.
+- Spring Boot Actuator + Micrometer — application metrics.
 
-- Backend availability
-- EC2 CPU usage
-- EC2 memory usage
-- EC2 disk usage
-- Backend request rate
-- Backend error rate
-- Backend JVM heap usage
-- Backend JVM threads
-- Backend garbage collection activity
+## 2. Prometheus Targets
 
-The monitoring stack contains:
-
-- Prometheus
-- Grafana
-- Node Exporter
-- cAdvisor
-- Spring Boot Actuator
-- Micrometer Prometheus metrics
-
----
-
-## 2. Monitoring Architecture
+Configured targets:
 
 ```text
-                    +------------------+
-                    |   Spring Boot    |
-                    |     Backend      |
-                    +--------+---------+
-                             |
-                             | Application metrics
-                             v
-                    +------------------+
-                    |    Prometheus     |
-                    +--------+---------+
-                             |
-                             | Metrics
-                             v
-                    +------------------+
-                    |     Grafana       |
-                    +------------------+
-
-        EC2 System Metrics
-                 |
-                 v
-          +--------------+
-          | Node Exporter|
-          +--------------+
-                 |
-                 v
-             Prometheus
-
-        Docker Metrics
-                 |
-                 v
-            +---------+
-            | cAdvisor|
-            +---------+
-                 |
-                 v
-             Prometheus
+backend:8080/actuator/prometheus
+node-exporter:9100/metrics
+cadvisor:8080/metrics
 ```
 
----
+## 3. Dashboard Coverage
 
-## 3. Prometheus
+The current Grafana dashboard covers:
 
-Prometheus collects metrics from the application and EC2 server.
+| Metric | Purpose |
+|---|---|
+| Backend availability | Detect service outage |
+| Request rate | Understand traffic/load |
+| Error rate | Detect failed requests |
+| EC2 CPU | Detect CPU saturation |
+| EC2 memory | Detect memory pressure |
+| EC2 disk | Detect disk exhaustion risk |
+| JVM heap | Detect application memory pressure |
+| JVM threads | Detect thread growth |
+| JVM GC activity | Detect garbage-collection pressure |
 
-The main monitored targets are:
+## 4. Latency
 
-- Spring Boot backend
-- Node Exporter
-- cAdvisor
-
-The Prometheus configuration is stored in:
+Spring Boot currently exposes:
 
 ```text
-monitoring/prometheus/prometheus.yml
+http_server_requests_seconds_sum
+http_server_requests_seconds_count
+http_server_requests_seconds_max
 ```
 
-Prometheus runs on port:
+The histogram bucket metric:
 
 ```text
-9090
+http_server_requests_seconds_bucket
 ```
 
-Prometheus can be checked using:
+is not currently exposed.
 
-```bash
-docker compose ps prometheus
-```
-
-Prometheus logs can be checked using:
-
-```bash
-docker compose logs --tail=100 prometheus
-```
-
----
-
-## 4. Spring Boot Application Metrics
-
-The backend uses Spring Boot Actuator and Micrometer to expose application metrics.
-
-The Prometheus metrics endpoint is:
-
-```text
-/actuator/prometheus
-```
-
-The application health endpoint is:
-
-```text
-/actuator/health
-```
-
-The backend exposes metrics such as:
-
-- HTTP request count
-- HTTP request duration
-- HTTP response status
-- JVM memory
-- JVM threads
-- JVM garbage collection
-- Application process information
-
-Example Prometheus query for backend requests:
+Therefore the project does **not** claim a P95 latency metric. Average request latency can be calculated with:
 
 ```promql
+sum(rate(http_server_requests_seconds_sum{job="todo-backend"}[5m]))
+/
 sum(rate(http_server_requests_seconds_count{job="todo-backend"}[5m]))
 ```
 
----
+This is a valid average latency calculation, not a percentile.
 
-## 5. Node Exporter
+## 5. Alerts
 
-Node Exporter collects EC2 server-level metrics.
+### Backend Down
 
-It provides information about:
-
-- CPU
-- Memory
-- Disk
-- System resources
-
-Node Exporter runs on port:
-
-```text
-9100
-```
-
-It is used by Prometheus to collect EC2 infrastructure metrics.
-
----
-
-## 6. cAdvisor
-
-cAdvisor is included in the monitoring stack to provide Docker container metrics.
-
-It is configured to collect container-related information from the Docker host.
-
-However, on the current EC2 environment, cAdvisor does not expose all Docker container-level metrics because of the host's Docker storage and cgroup configuration.
-
-The EC2 server uses:
-
-- Docker `overlayfs`
-- cgroup v2
-- systemd cgroup driver
-
-Therefore, container-specific cAdvisor metrics are not currently relied upon for the main dashboard.
-
-Node Exporter and Spring Boot application metrics are used as the primary monitoring sources.
-
----
-
-# 7. Grafana Dashboard
-
-Grafana is used to visualize the metrics collected by Prometheus.
-
-Grafana runs on:
-
-```text
-3001
-```
-
-The dashboard contains the following panels.
-
-### Panel 1 — Backend Availability
-
-Prometheus query:
+Prometheus rule:
 
 ```promql
-up{job="todo-backend"}
+up{job="todo-backend"} < 1
 ```
 
-This shows whether the backend is available.
+The Grafana Backend Down alert was tested by stopping the backend and observing the alert enter `Firing`, followed by recovery to `Normal` after the service was restored.
 
-Expected value:
+### High EC2 CPU
+
+Prometheus/Grafana expression:
+
+```promql
+100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+```
+
+The alert is configured for sustained high CPU. It is intended to avoid alerting on short-lived CPU spikes.
+
+## 6. cAdvisor Limitation
+
+cAdvisor is deployed and Prometheus can scrape its endpoint. However, the current EC2 Docker environment reports errors while identifying some Docker overlay filesystem layers. As a result, per-container cAdvisor metrics are not treated as a complete source of container restart/resource telemetry.
+
+This limitation is documented instead of being hidden.
+
+## 7. Uptime
+
+Spring Boot exposes process uptime through metrics such as:
 
 ```text
-1 = Available
-0 = Unavailable
+process_uptime_seconds
 ```
 
----
+This provides a reliable application-process uptime signal. It can be used to identify application restarts even when complete cAdvisor container metadata is unavailable.
 
-### Panel 2 — EC2 CPU Usage
+## 8. Important Logs
 
-Prometheus query:
-
-```promql
-100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
-```
-
-This shows the percentage of CPU being used on the EC2 server.
-
----
-
-### Panel 3 — EC2 Memory Usage
-
-Prometheus query:
-
-```promql
-100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))
-```
-
-This shows the percentage of EC2 memory currently being used.
-
----
-
-### Panel 4 — EC2 Disk Usage
-
-Prometheus query:
-
-```promql
-100 * (
-  1 -
-  (
-    node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}
-    /
-    node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}
-  )
-)
-```
-
-This shows the percentage of disk space being used.
-
----
-
-### Panel 5 — Backend Request Rate
-
-Prometheus query:
-
-```promql
-sum(rate(http_server_requests_seconds_count{job="todo-backend"}[5m]))
-```
-
-This shows the number of backend requests being received per second.
-
----
-
-### Panel 6 — Backend Error Rate
-
-Prometheus query:
-
-```promql
-sum(
-  rate(
-    http_server_requests_seconds_count{
-      job="todo-backend",
-      status=~"4..|5.."
-    }[5m]
-  )
-) or vector(0)
-```
-
-This shows the rate of HTTP 4xx and 5xx responses.
-
----
-
-### Panel 7 — Backend JVM Heap Usage
-
-Prometheus query:
-
-```promql
-100 * (
-  sum(jvm_memory_used_bytes{job="todo-backend",area="heap"})
-  /
-  sum(jvm_memory_max_bytes{job="todo-backend",area="heap"})
-)
-```
-
-This shows the percentage of JVM heap memory being used.
-
----
-
-### Panel 8 — Backend JVM Threads
-
-Prometheus query:
-
-```promql
-sum(jvm_threads_live_threads{job="todo-backend"})
-```
-
-This shows the number of active JVM threads.
-
----
-
-### Panel 9 — Backend Garbage Collection Activity
-
-Prometheus query:
-
-```promql
-sum(rate(jvm_gc_pause_seconds_count{job="todo-backend"}[5m]))
-```
-
-This shows JVM garbage collection activity.
-
----
-
-# 8. Alerts
-
-Two meaningful alerts are configured in Grafana.
-
-## Alert 1 — Backend Down
-
-The alert checks:
-
-```promql
-up{job="todo-backend"}
-```
-
-Condition:
-
-```text
-Below 1
-```
-
-The alert is triggered when the backend remains unavailable for at least one minute.
-
-Summary:
-
-```text
-Backend application is down
-```
-
-Description:
-
-```text
-The Todo Summary Assistant backend has been unavailable for at least 1 minute.
-```
-
----
-
-## Alert 2 — High EC2 CPU
-
-The alert uses:
-
-```promql
-100 - (
-  avg by (instance) (
-    rate(node_cpu_seconds_total{mode="idle"}[5m])
-  ) * 100
-)
-```
-
-Condition:
-
-```text
-Above 80%
-```
-
-The alert is triggered when EC2 CPU usage remains above 80% for at least five minutes.
-
-Summary:
-
-```text
-EC2 CPU usage is high
-```
-
-Description:
-
-```text
-EC2 CPU usage has remained above 80% for at least 5 minutes.
-```
-
----
-
-# 9. Alert Testing
-
-The backend availability alert was tested by intentionally stopping the backend container.
-
-The test process was:
-
-1. Stop the backend container.
-2. Wait for the Grafana alert evaluation.
-3. Verify that the Backend Down alert changes to `Firing`.
-4. Restore the application.
-5. Verify that the alert returns to `Normal`.
-
-The application was restored using the deployment script:
-
-```bash
-./deploy.sh "$(cat .current_tag)"
-```
-
-This confirms that the backend availability alert is working.
-
-The high CPU alert is configured with an 80% threshold and a five-minute pending period.
-
----
-
-# 10. Application Health Checks
-
-The backend provides a health endpoint:
-
-```text
-/actuator/health
-```
-
-The frontend provides:
-
-```text
-/health
-```
-
-The deployment script checks both endpoints after deployment.
-
-The deployment is considered successful only when both health checks pass.
-
-If the health checks fail, the deployment script attempts to restore the previous working version.
-
----
-
-# 11. Operational Checks
-
-## Check all containers
-
-```bash
-docker compose ps
-```
-
-## Check backend status
-
-```bash
-docker compose ps backend
-```
-
-## Check frontend status
-
-```bash
-docker compose ps frontend
-```
-
-## Check Prometheus status
-
-```bash
-docker compose ps prometheus
-```
-
-## Check Grafana status
-
-```bash
-docker compose ps grafana
-```
-
-## Check backend logs
+### Application
 
 ```bash
 docker compose logs --tail=100 backend
-```
-
-## Check frontend logs
-
-```bash
 docker compose logs --tail=100 frontend
 ```
 
-## Check Prometheus logs
+Look for:
+
+- startup failures
+- database authentication failures
+- connection failures
+- unhandled exceptions
+- repeated restarts
+
+### Nginx
+
+```bash
+sudo nginx -t
+sudo nginx -T
+sudo systemctl status nginx
+```
+
+### Monitoring
 
 ```bash
 docker compose logs --tail=100 prometheus
-```
-
-## Check Grafana logs
-
-```bash
 docker compose logs --tail=100 grafana
+docker logs --tail=100 node-exporter
+docker logs --tail=100 cadvisor
 ```
 
----
+## 9. Operational Detection Strategy
 
-# 12. Deployment Verification
+Problems should be detected through a combination of:
 
-After every deployment, verify:
+1. Deployment health checks.
+2. Docker restart behavior.
+3. Prometheus target health.
+4. Grafana dashboards.
+5. Service-down alerts.
+6. CPU/resource alerts.
+7. Application and Nginx logs.
 
-1. Backend container is running.
-2. Frontend container is running.
-3. Backend health check is successful.
-4. Frontend health check is successful.
-5. Prometheus is running.
-6. Grafana is running.
-7. Backend metrics are available.
-8. No unexpected errors are present in the application logs.
-
-The deployment script performs backend and frontend health checks automatically.
-
----
-
-# 13. Troubleshooting
-
-## Backend Is Not Running
-
-Check:
-
-```bash
-docker compose ps backend
-```
-
-Then check logs:
-
-```bash
-docker compose logs --tail=100 backend
-```
-
-If the deployment failed, check the current working version:
-
-```bash
-cat .current_tag
-```
-
-The previous working version can be redeployed using:
-
-```bash
-./deploy.sh "$(cat .current_tag)"
-```
-
----
-
-## Frontend Is Not Running
-
-Check:
-
-```bash
-docker compose ps frontend
-```
-
-Then check:
-
-```bash
-docker compose logs --tail=100 frontend
-```
-
----
-
-## Prometheus Is Not Showing Metrics
-
-Check Prometheus:
-
-```bash
-docker compose ps prometheus
-```
-
-Check logs:
-
-```bash
-docker compose logs --tail=100 prometheus
-```
-
-Verify that the backend metrics endpoint is available:
-
-```text
-/actuator/prometheus
-```
-
----
-
-## Grafana Is Not Available
-
-Check:
-
-```bash
-docker compose ps grafana
-```
-
-Check logs:
-
-```bash
-docker compose logs --tail=100 grafana
-```
-
-Grafana runs on port:
-
-```text
-3001
-```
-
-For security, Grafana does not need to be permanently exposed to the public internet.
-
-An SSH tunnel can be used when administrative access is required.
-
----
-
-# 14. Monitoring and Security
-
-Monitoring services should not be unnecessarily exposed to the public internet.
-
-The production environment should keep administrative monitoring interfaces restricted.
-
-The database is not publicly accessible.
-
-RDS access is restricted to the EC2 security group on port 3306.
-
-Application secrets are retrieved from AWS Secrets Manager rather than being stored in source code.
-
----
-
-# 15. Operational Summary
-
-The monitoring setup provides visibility into both application and infrastructure health.
-
-Application monitoring is provided through:
-
-- Spring Boot Actuator
-- Micrometer
-- Prometheus
-- Grafana
-
-Infrastructure monitoring is provided through:
-
-- Node Exporter
-- Prometheus
-- Grafana
-
-Alerting is provided through Grafana for:
-
-- Backend availability
-- High EC2 CPU usage
-
-The deployment process also performs health checks and supports rollback to the previous working Docker image version when a deployment fails.
+The goal is to alert on actionable conditions rather than every minor metric fluctuation.

@@ -1,24 +1,43 @@
 # Project Documentation Index
 
-## AWS
-- `aws/aws-setup.md`
-- `aws/architecture-diagram.png`
+This index is the starting point for reviewing the DevOps assessment submission.
 
-## Operations
-- `docs/DEPLOYMENT.md`
-- `docs/MONITORING_AND_OPERATIONS.md`
-- `docs/FAILURE_AND_ROLLBACK.md`
-- `docs/SECURITY.md`
-- `docs/TESTING.md`
-- `docs/TROUBLESHOOTING.md`
+## AWS and Architecture
+
+- `aws/aws-setup.md` — AWS resources, networking, security groups, IAM and Secrets Manager.
+- `aws/architecture-diagram.png` — architecture diagram.
+- `docs/AWS_ARCHITECTURE.md` — detailed application, CI/CD and AWS architecture.
+
+## Deployment and Operations
+
+- `docs/DEPLOYMENT.md` — normal deployment, health checks and rollback commands.
+- `FAILURE_AND_ROLLBACK.md` — required six failure/rollback scenarios.
+- `docs/MONITORING_AND_OPERATIONS.md` — monitoring design, metrics, alerts and operational response.
+- `MONITORING_AND_OPERATIONS.md` — root-level copy for easy submission review.
+
+## Security and Validation
+
+- `docs/SECURITY.md` — secrets, IAM, RDS and network-security controls.
+- `docs/TESTING.md` — validation performed and verification commands.
+- `docs/TROUBLESHOOTING.md` — known operational problems and recovery commands.
 
 ## Project Control
-- `docs/PROJECT_STATUS.md`
-- `docs/REPOSITORY_CHECKLIST.md`
 
-## Monitoring
-- `monitoring/README.md`
+- `docs/PROJECT_STATUS.md` — implementation status and known limitations.
+- `docs/REPOSITORY_CHECKLIST.md` — final submission checklist.
+
+## Monitoring Configuration
+
 - `monitoring/prometheus/prometheus.yml`
+- `monitoring/prometheus/alert-rules.yml`
+- `monitoring/README.md`
 
-## Important
-Some items are intentionally marked as TODO/Requires Final Verification where the current environment did not provide enough verified evidence. They should be completed before final submission rather than being presented as already verified.
+## Documentation Principle
+
+Documentation deliberately distinguishes between:
+
+- implemented and verified behavior,
+- configured but not yet tested behavior, and
+- known limitations.
+
+This prevents the submission from claiming infrastructure behavior that has not actually been verified.

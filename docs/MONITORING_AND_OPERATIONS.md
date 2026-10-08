@@ -1,259 +1,151 @@
 # Monitoring and Operations
 
-## 1. Monitoring Architecture
+## 1. Monitoring Stack
+
+The monitoring stack runs on EC2:
+
+- Prometheus — metric collection and rule evaluation.
+- Grafana — dashboards and alerting.
+- Node Exporter — EC2 host metrics.
+- cAdvisor — container metrics where supported.
+- Spring Boot Actuator + Micrometer — application metrics.
+
+## 2. Prometheus Targets
+
+Configured targets:
 
 ```text
-Spring Boot
-    |
-    | /actuator/prometheus
-    v
-Prometheus <---- Node Exporter
-    |
-    +---------- cAdvisor
-    |
-    v
-Grafana
+backend:8080/actuator/prometheus
+node-exporter:9100/metrics
+cadvisor:8080/metrics
 ```
 
-## 2. Monitoring Components
+## 3. Dashboard Coverage
 
-### Prometheus
+The current Grafana dashboard covers:
 
-Collects application and infrastructure metrics.
+| Metric | Purpose |
+|---|---|
+| Backend availability | Detect service outage |
+| Request rate | Understand traffic/load |
+| Error rate | Detect failed requests |
+| EC2 CPU | Detect CPU saturation |
+| EC2 memory | Detect memory pressure |
+| EC2 disk | Detect disk exhaustion risk |
+| JVM heap | Detect application memory pressure |
+| JVM threads | Detect thread growth |
+| JVM GC activity | Detect garbage-collection pressure |
 
-### Grafana
+## 4. Latency
 
-Provides dashboards and alerting.
+Spring Boot currently exposes:
 
-### Node Exporter
-
-Provides EC2 host metrics including CPU, memory and filesystem metrics.
-
-### cAdvisor
-
-Provides Docker/container metrics where compatible with the Docker runtime.
-
-### Spring Boot Actuator
-
-Provides application health and Prometheus metrics.
-
-## 3. Required Dashboard Coverage
-
-The dashboard should cover:
-
-- Backend availability
-- Request rate
-- Error rate
-- Request latency
-- EC2 CPU
-- EC2 memory
-- EC2 disk
-- Application uptime
-- Container restart/uptime information where reliable metrics are available
-
-## 4. Current Dashboard Queries
-
-### Backend Availability
-
-```promql
-up{job="todo-backend"}
+```text
+http_server_requests_seconds_sum
+http_server_requests_seconds_count
+http_server_requests_seconds_max
 ```
 
-### EC2 CPU
+The histogram bucket metric:
 
-```promql
-100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+```text
+http_server_requests_seconds_bucket
 ```
 
-### EC2 Memory
+is not currently exposed.
+
+Therefore the project does **not** claim a P95 latency metric. Average request latency can be calculated with:
 
 ```promql
-100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))
-```
-
-### EC2 Disk
-
-```promql
-100 * (1 - (node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}))
-```
-
-### Backend Request Rate
-
-```promql
+sum(rate(http_server_requests_seconds_sum{job="todo-backend"}[5m]))
+/
 sum(rate(http_server_requests_seconds_count{job="todo-backend"}[5m]))
 ```
 
-### Backend Error Rate
+This is a valid average latency calculation, not a percentile.
 
-```promql
-sum(rate(http_server_requests_seconds_count{job="todo-backend",status=~"4..|5.."}[5m])) or vector(0)
-```
-
-### JVM Heap Usage
-
-```promql
-100 * (sum(jvm_memory_used_bytes{job="todo-backend",area="heap"}) / sum(jvm_memory_max_bytes{job="todo-backend",area="heap"}))
-```
-
-### JVM Threads
-
-```promql
-sum(jvm_threads_live_threads{job="todo-backend"})
-```
-
-### GC Activity
-
-```promql
-sum(rate(jvm_gc_pause_seconds_count{job="todo-backend"}[5m]))
-```
-
-## 5. Latency Panel
-
-Preferred query for P95 latency, if the histogram metric is available:
-
-```promql
-histogram_quantile(
-  0.95,
-  sum by (le) (
-    rate(http_server_requests_seconds_bucket{job="todo-backend"}[5m])
-  )
-)
-```
-
-Verify the metric exists before relying on the panel.
-
-## 6. Uptime
-
-Application process uptime can be represented with:
-
-```promql
-process_uptime_seconds{job="todo-backend"}
-```
-
-## 7. Alerts
+## 5. Alerts
 
 ### Backend Down
 
-Query:
+Prometheus rule:
 
 ```promql
-up{job="todo-backend"}
+up{job="todo-backend"} < 1
 ```
 
-Condition:
-
-```text
-Below 1
-```
-
-Recommended configuration:
-
-- Evaluation: 1 minute
-- Pending: 1 minute
-
-Summary:
-
-```text
-Backend application is down
-```
-
-Description:
-
-```text
-The Todo Summary Assistant backend has been unavailable for at least 1 minute.
-```
+The Grafana Backend Down alert was tested by stopping the backend and observing the alert enter `Firing`, followed by recovery to `Normal` after the service was restored.
 
 ### High EC2 CPU
 
-Query:
+Prometheus/Grafana expression:
 
 ```promql
-100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
 ```
 
-Condition:
+The alert is configured for sustained high CPU. It is intended to avoid alerting on short-lived CPU spikes.
+
+## 6. cAdvisor Limitation
+
+cAdvisor is deployed and Prometheus can scrape its endpoint. However, the current EC2 Docker environment reports errors while identifying some Docker overlay filesystem layers. As a result, per-container cAdvisor metrics are not treated as a complete source of container restart/resource telemetry.
+
+This limitation is documented instead of being hidden.
+
+## 7. Uptime
+
+Spring Boot exposes process uptime through metrics such as:
 
 ```text
-Above 80
+process_uptime_seconds
 ```
 
-Recommended configuration:
+This provides a reliable application-process uptime signal. It can be used to identify application restarts even when complete cAdvisor container metadata is unavailable.
 
-- Evaluation: 1 minute
-- Pending: 5 minutes
+## 8. Important Logs
 
-Summary:
-
-```text
-EC2 CPU usage is high
-```
-
-Description:
-
-```text
-EC2 CPU usage has remained above 80% for at least 5 minutes.
-```
-
-## 8. Alert Validation
-
-Backend-down alert can be tested by stopping the backend container:
+### Application
 
 ```bash
-docker stop todo-backend
-```
-
-Confirm the alert changes to Firing.
-
-Restore the application through the deployment procedure:
-
-```bash
-cd /home/ubuntu/todolistassesment
-./deploy.sh "$(cat .current_tag)"
-```
-
-Confirm that the alert returns to Normal.
-
-## 9. cAdvisor Limitation
-
-cAdvisor is included in the monitoring stack, but container-specific metrics must be verified against the EC2 Docker runtime.
-
-If cAdvisor does not expose reliable container metrics, do not claim that container restart metrics are available from cAdvisor.
-
-The architecture can still use:
-
-- Spring Boot metrics
-- Prometheus
-- Node Exporter
-- Grafana
-
-for the verified monitoring requirements.
-
-## 10. Security
-
-Do not expose Grafana publicly unless required.
-
-Preferred access is through an SSH tunnel or a restricted administrative security-group rule.
-
-Do not expose Prometheus or cAdvisor publicly without a specific operational requirement.
-
-## 11. Operations
-
-Useful commands:
-
-```bash
-docker compose ps
 docker compose logs --tail=100 backend
 docker compose logs --tail=100 frontend
-docker stats
-df -h
-free -h
-uptime
 ```
 
-Check Nginx:
+Look for:
+
+- startup failures
+- database authentication failures
+- connection failures
+- unhandled exceptions
+- repeated restarts
+
+### Nginx
 
 ```bash
-sudo systemctl status nginx
 sudo nginx -t
 sudo nginx -T
+sudo systemctl status nginx
 ```
+
+### Monitoring
+
+```bash
+docker compose logs --tail=100 prometheus
+docker compose logs --tail=100 grafana
+docker logs --tail=100 node-exporter
+docker logs --tail=100 cadvisor
+```
+
+## 9. Operational Detection Strategy
+
+Problems should be detected through a combination of:
+
+1. Deployment health checks.
+2. Docker restart behavior.
+3. Prometheus target health.
+4. Grafana dashboards.
+5. Service-down alerts.
+6. CPU/resource alerts.
+7. Application and Nginx logs.
+
+The goal is to alert on actionable conditions rather than every minor metric fluctuation.

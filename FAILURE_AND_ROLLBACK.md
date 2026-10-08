@@ -1,38 +1,45 @@
 # Failure and Rollback Strategy
 
-## 1. Faulty Version Is Deployed
+This document answers the six failure scenarios required by the assessment and describes the recovery mechanisms implemented in the deployment.
 
-The CI/CD pipeline builds Docker images and uses the Git commit ID as the image version.
+## 1. A Faulty Version Is Deployed
 
-During deployment:
+Each Docker image is tagged with the Git commit SHA. The last successful deployment tag is stored on EC2 in:
 
-1. GitHub Actions builds the backend and frontend Docker images.
-2. Each Docker image is tagged with the Git commit ID.
-3. GitHub Actions connects to the EC2 server.
-4. `deploy.sh` gets the database username and password from AWS Secrets Manager.
-5. The required Docker images are downloaded.
-6. The application containers are started.
-7. Backend and frontend health checks are performed.
-8. The version is saved as the current working version only after the health checks pass.
+```text
+.current_tag
+```
 
-If the new version fails the health checks, `deploy.sh` tries to restore the previous working version.
+`deploy.sh` performs backend and frontend health checks after starting the requested version.
+
+If either health check fails:
+
+1. The failed deployment is reported.
+2. Container status and recent logs are printed.
+3. The previous successful tag is loaded from `.current_tag`.
+4. Backend and frontend images for that tag are pulled.
+5. Docker Compose is restarted with the previous tag.
+6. Backend and frontend health checks are repeated.
+7. `.current_tag` is restored if rollback succeeds.
+8. The deployment command exits with failure so CI/CD correctly reports that the requested release failed.
 
 ### Rollback Flow
 
 ```text
-New version deployed
-        |
-        v
+New SHA
+  |
+  v
+Deploy
+  |
+  v
 Health checks
-        |
-     +--+--+
-     |     |
-   PASS   FAIL
-     |     |
-     v     v
- Save    Restore
- version previous
-          version
+  |
+ +----+----+
+ |         |
+PASS      FAIL
+ |         |
+ v         v
+Save SHA  Restore previous SHA
              |
              v
         Health checks
@@ -42,219 +49,113 @@ Health checks
       PASS       FAIL
         |         |
         v         v
-    Rollback    Critical
-    successful   failure
+    Recovery    Critical
+    complete     incident
 ```
 
----
+### Controlled Rollback Test
 
-## 2. Application Crashes After Deployment
+The automatic rollback mechanism was tested with a controlled health-check failure. The new deployment failed its health check, the script restored the previous successful image tag, and both backend and frontend rollback health checks passed.
 
-If the application crashes after deployment, Docker automatically tries to restart the container.
+## 2. The Application Crashes After Deployment
 
-The Docker Compose configuration uses:
+Docker Compose uses:
 
 ```yaml
 restart: unless-stopped
 ```
 
-The application status can be checked using:
+Therefore Docker attempts to restart a crashed container.
+
+Operational checks:
 
 ```bash
 docker compose ps
-```
-
-Backend logs can be checked using:
-
-```bash
 docker compose logs --tail=100 backend
-```
-
-Frontend logs can be checked using:
-
-```bash
 docker compose logs --tail=100 frontend
 ```
 
-If the crash is caused by the newly deployed version, the previous working version can be restored using the rollback process.
-
----
-
-## 3. CI/CD Tool Is Unavailable
-
-If GitHub Actions is temporarily unavailable, the application that is already running on EC2 can continue to run.
-
-An authorized operator can manually deploy a specific application version using:
-
-```bash
-./deploy.sh VERSION
-```
-
-For example:
-
-```bash
-./deploy.sh 02294c4eb740e75286a8d69b5efd376821618258
-```
-
-Here, `VERSION` means the Git commit ID of the Docker image that should be deployed.
-
-The previous working version can also be deployed again using:
+If the crash is caused by the newly deployed image, redeploy the previous known-good SHA:
 
 ```bash
 ./deploy.sh "$(cat .current_tag)"
 ```
 
-GitHub Actions remains the normal method for future deployments.
+## 3. The CI/CD Tool Is Unavailable
 
----
+The already-running application can continue serving users independently of GitHub Actions.
+
+For an emergency deployment, an authorized operator with EC2 access can run:
+
+```bash
+./deploy.sh <KNOWN_IMAGE_TAG>
+```
+
+The normal process remains GitHub Actions because it provides the repeatable build, test, image-publish and deployment workflow.
 
 ## 4. Secrets Are Leaked
 
-If a password, API key, or other secret is accidentally exposed, the affected secret should be changed immediately.
+If a database password, API key, webhook, SSH key or AWS credential is exposed:
 
-The recovery steps are:
+1. Revoke or rotate the affected credential immediately.
+2. Update the secret in the appropriate secret store.
+3. Search Git history and current files for the exposed value.
+4. Remove the secret from the repository if it was committed.
+5. Rotate related credentials if compromise cannot be ruled out.
+6. Redeploy using the new secret.
+7. Review access logs and IAM activity where applicable.
+8. Confirm the old credential no longer works.
 
-1. Change the affected secret.
-2. Update the secret in AWS Secrets Manager.
-3. Check the Git repository for exposed credentials.
-4. Remove accidentally committed credentials if any exist.
-5. Change affected external credentials if required.
-6. Redeploy the application.
-7. Verify that the application works with the new secret.
+Database credentials are stored in AWS Secrets Manager and are retrieved using the EC2 IAM role.
 
-Database credentials are stored in AWS Secrets Manager and are not stored in the Git repository.
+## 5. The EC2 Instance Fails
 
-The EC2 server accesses AWS Secrets Manager using its IAM role instead of storing AWS access keys on the server.
+If EC2 fails, the application and monitoring containers on that host become unavailable.
 
----
+Recovery:
 
-## 5. EC2 Instance Fails
-
-If the EC2 server fails, the application running on that server becomes unavailable.
-
-The recovery process is:
-
-1. Create or restore a replacement EC2 server.
+1. Provision or restore a replacement EC2 instance.
 2. Attach the required IAM role.
-3. Install Docker and AWS CLI.
-4. Configure the required security group.
-5. Restore the deployment files.
-6. Verify access to AWS Secrets Manager.
-7. Deploy the required application version.
-8. Check the backend and frontend health.
-9. Restore monitoring if required.
+3. Apply the required security group.
+4. Install Docker, Docker Compose and AWS CLI.
+5. Restore the repository/deployment files.
+6. Verify access to Secrets Manager.
+7. Deploy a known-good image tag.
+8. Verify backend and frontend health.
+9. Restore Nginx and monitoring access.
+10. Confirm RDS connectivity.
 
-The database is hosted separately on Amazon RDS, so the database does not need to be recreated when the EC2 server is replaced.
+Because the database is hosted separately on RDS, an EC2 replacement does not require recreating the database.
 
----
+## 6. The RDS Database Becomes Unavailable
 
-## 6. RDS Database Becomes Unavailable
+Impact:
 
-If the RDS database becomes unavailable, the backend may not be able to read or save application data.
+- The backend may fail health checks or database operations.
+- Reads/writes to Todo data can fail.
+- The frontend may remain reachable but application functionality depending on the database will be degraded or unavailable.
 
-The recovery process is:
+Recovery:
 
 1. Check the RDS instance status.
-2. Check RDS events.
-3. Check connectivity from EC2 to RDS.
-4. Check the RDS security group.
-5. Check RDS monitoring information.
-6. Restore the database from an appropriate backup or snapshot if required.
-7. Verify database connectivity.
-8. Check the backend health.
-9. Verify the application.
+2. Review RDS events and monitoring.
+3. Test network connectivity from EC2.
+4. Verify the RDS security group still permits the EC2 security group.
+5. Verify the database endpoint and credentials.
+6. Restore from an appropriate RDS backup or snapshot when necessary.
+7. Re-establish connectivity.
+8. Verify backend health.
+9. Verify application read/write operations.
 
-For production environments, automated RDS backups should be enabled with an appropriate retention period.
+For a higher-availability production environment, RDS Multi-AZ and an appropriate automated-backup retention policy should be considered. This assessment deployment should not claim Multi-AZ or backup retention unless those settings are actually enabled and verified.
 
-Multi-AZ can also be considered when higher availability is required.
+# Operational Principles
 
----
-
-# Rollback Principles
-
-The deployment strategy follows these principles:
-
-- Use Git commit IDs as Docker image versions.
-- Keep track of the previous working version.
-- Perform health checks after deployment.
-- Automatically attempt rollback when deployment health checks fail.
-- Keep database credentials outside the source code.
-- Use an AWS IAM role instead of static AWS credentials.
-- Monitor application and infrastructure health.
-- Keep production database data on Amazon RDS instead of inside application containers.
-
----
-
-# Operational Commands
-
-## Check Application Status
-
-```bash
-docker compose ps
-```
-
-## Check Backend Logs
-
-```bash
-docker compose logs --tail=100 backend
-```
-
-## Check Frontend Logs
-
-```bash
-docker compose logs --tail=100 frontend
-```
-
-## Check the Current Working Version
-
-```bash
-cat .current_tag
-```
-
-## Deploy a Specific Version
-
-Replace `VERSION` with the Git commit ID of the version you want to deploy.
-
-```bash
-./deploy.sh VERSION
-```
-
-Example:
-
-```bash
-./deploy.sh 02294c4eb740e75286a8d69b5efd376821618258
-```
-
-## Deploy the Previous Working Version
-
-The previous successful version can be deployed using:
-
-```bash
-./deploy.sh "$(cat .current_tag)"
-```
-
-## Manual Rollback
-
-A specific previous version can also be restored using:
-
-```bash
-./rollback.sh VERSION
-```
-
-For example:
-
-```bash
-./rollback.sh 02294c4eb740e75286a8d69b5efd376821618258
-```
-
----
-
-# Important Notes
-
-The rollback process is designed to restore the previous Docker image version if a new deployment fails its health checks.
-
-Database credentials are retrieved from AWS Secrets Manager during deployment and are not stored in the Git repository.
-
-The application database is hosted on Amazon RDS separately from the EC2 server.
-
-GitHub Actions is the normal deployment method, while the deployment scripts provide a manual recovery option when required.
+- Deploy immutable SHA-tagged images.
+- Keep the last successful version identifiable.
+- Perform post-deployment health checks.
+- Roll back automatically when deployment health checks fail.
+- Keep credentials outside source control.
+- Use an IAM role rather than static AWS credentials.
+- Keep the database outside the application containers.
+- Monitor both application and infrastructure health.

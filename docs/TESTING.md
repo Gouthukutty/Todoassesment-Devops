@@ -1,66 +1,33 @@
 # DevOps Testing and Validation
 
-## 1. Source Validation
+## 1. Static Validation
 
-Verify:
+Validated during implementation:
 
-- Dockerfiles exist.
-- `.dockerignore` files exist.
-- Compose configuration is valid.
-- GitHub Actions workflow is valid.
-- No credentials are committed.
+- GitHub Actions YAML structure.
+- Docker Compose configuration structure.
+- Shell-script syntax.
+- Prometheus configuration syntax.
+- Prometheus alert-rule syntax.
 
-## 2. Backend
+## 2. Backend and Frontend
 
-Run:
-
-```bash
-mvn -B test
-```
-
-Expected result:
-
-```text
-BUILD SUCCESS
-```
-
-## 3. Frontend
-
-Run:
+Expected local checks:
 
 ```bash
+cd Backend/todo-summary-assistant
+./mvnw -B test
+```
+
+```bash
+cd Frontend/todo
 npm ci
 npm run build
 ```
 
-Expected result:
+The sandbox environment used for development did not provide reliable external network access for completing every dependency download, so this document does not claim a full offline Maven/npm build where one was not observed.
 
-```text
-Production build succeeds
-```
-
-## 4. Docker
-
-Build images:
-
-```bash
-docker build -t todoassessment-backend ./backend
-docker build -t todoassessment-frontend ./frontend
-```
-
-Start the stack:
-
-```bash
-docker compose up -d
-```
-
-Check:
-
-```bash
-docker compose ps
-```
-
-## 5. Health Checks
+## 3. Deployment Health Checks
 
 Backend:
 
@@ -74,36 +41,38 @@ Frontend:
 curl http://127.0.0.1:3000/health
 ```
 
-## 6. CI/CD
+Nginx routing was also verified with local HTTP requests to the host-level Nginx endpoint.
 
-Verify that a push to `main`:
+## 4. CI/CD
 
-1. Runs backend tests.
-2. Builds the frontend.
-3. Builds Docker images.
-4. Pushes images to Docker Hub.
-5. Connects to EC2.
-6. Runs deployment.
-7. Performs health checks.
+The deployed GitHub Actions workflow performs:
 
-## 7. Rollback Test
+1. Backend test.
+2. Frontend build.
+3. Docker image build.
+4. Docker Hub publish on main-branch deployment.
+5. SSH deployment to EC2.
+6. Post-deployment health checks.
 
-Use a deliberately invalid or known-bad deployment version only in a controlled test.
+The deployment stage was successfully exercised against EC2.
 
-Verify:
+## 5. Rollback
 
-- New deployment fails health checks.
-- Previous successful tag is detected.
-- Previous version is restored.
-- Health checks pass after rollback.
+A controlled rollback test was completed. The deployment health check was deliberately made to fail, after which `deploy.sh` restored the previous successful image tag and both rollback health checks passed.
 
-## 8. Monitoring
+## 6. Monitoring
 
-Verify:
+Verified/configured:
 
-- Prometheus is reachable from the approved administrative path.
-- Grafana is running.
-- Backend metrics are visible.
-- Node Exporter metrics are visible.
-- Backend-down alert changes to Firing when backend is stopped.
-- Alert returns to Normal after recovery.
+- Prometheus backend target.
+- Prometheus Node Exporter target.
+- Prometheus cAdvisor target.
+- Grafana dashboard.
+- Backend Down alert, including Firing -> Normal recovery.
+- High CPU alert configuration.
+- Application request metrics.
+
+Known limitation:
+
+- `http_server_requests_seconds_bucket` is not exposed, so P95 latency is not claimed.
+- cAdvisor is scraped but has current-runtime limitations for some per-container metrics.

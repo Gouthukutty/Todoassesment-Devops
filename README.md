@@ -1,36 +1,52 @@
 # Todo Summary Assistant — DevOps Assessment
 
-Production-style DevOps enablement for the supplied full-stack Todo Summary Assistant. The original application remains the business application; the additions in this repository provide containerization, CI/CD, AWS deployment, RDS integration, monitoring, health checks, rollback and operational documentation.
+## 1. Overview
 
-## Assessment alignment
+This repository contains the existing Todo Summary Assistant application together with the DevOps enablement required for the assessment.
 
-The supplied assessment requires a React frontend, Spring Boot backend and MySQL database; Docker containers for frontend/backend; CI/CD; AWS EC2 + private RDS; Prometheus + Grafana; health checks; failure/rollback documentation; and no committed secrets. The repository structure below follows the required locations.
+The application consists of:
 
-## Architecture
+- Spring Boot + Maven backend
+- React frontend
+- MySQL database on Amazon RDS
+- Docker containers for backend and frontend
+- Docker Compose for the EC2 runtime stack
+- GitHub Actions for CI/CD
+- Docker Hub for versioned application images
+- Amazon EC2 for application hosting
+- AWS Secrets Manager for database credentials
+- Prometheus and Grafana for monitoring
+- Node Exporter for EC2 host metrics
+- cAdvisor for optional container metrics
+- Nginx as the host-level HTTP reverse proxy
 
-```text
-Internet
-   |
-   v
-AWS EC2 Security Group
-   | 80/443
-   v
-Nginx (host)
-   |---- / ------------------> React container :3000
-   |
-   +---- /api/ --------------> Spring Boot container :8081 -> :8080
-                                  |
-                                  +----> Private RDS MySQL :3306
-                                  |
-                                  +----> Cohere API / Slack webhook
+The implementation focuses on DevOps enablement. Business functionality was not intentionally redesigned.
 
-Prometheus -> Spring Actuator / Node Exporter / cAdvisor
-Grafana -> Prometheus
-```
+## 2. Assessment Alignment
 
-See `aws/architecture-diagram.png` for the visual architecture.
+The assessment requires Docker, CI/CD, AWS EC2 + RDS, externalized secrets, monitoring, rollback/failure documentation, and clear operational documentation. The implementation addresses these areas as follows:
 
-## Project structure
+| Requirement | Implementation |
+|---|---|
+| Backend containerization | Multi-stage Maven/JRE Dockerfile, non-root runtime |
+| Frontend containerization | Multi-stage Node/Nginx Dockerfile, non-root runtime |
+| Configuration | Environment variables; no production DB credentials in source |
+| CI/CD | GitHub Actions on push/PR |
+| Image registry | Docker Hub |
+| Image versioning | Git commit SHA + `latest` on main deployments |
+| EC2 deployment | Automated SSH deployment through `deploy.sh` |
+| Health checks | Spring Boot Actuator + frontend `/health` |
+| Rollback | Automatic rollback to last successful SHA |
+| Database | Amazon RDS MySQL |
+| DB security | RDS not publicly accessible; EC2 security group source |
+| AWS credentials | EC2 IAM role |
+| DB credentials | AWS Secrets Manager |
+| Application metrics | Spring Boot Actuator + Micrometer/Prometheus |
+| Host metrics | Node Exporter |
+| Container metrics | cAdvisor included; current environment has limitations |
+| Dashboards/alerts | Grafana dashboard + Backend Down + High CPU alerts |
+
+## 3. Repository Structure
 
 ```text
 TodoSummaryAssistant/
@@ -47,14 +63,22 @@ TodoSummaryAssistant/
 │   └── .dockerignore
 ├── .github/workflows/ci-cd.yml
 ├── aws/
-│   ├── architecture-diagram.png
 │   ├── aws-setup.md
-│   ├── nginx/todo-summary-assistant.conf
-│   └── scripts/setup-ec2.sh
+│   └── architecture-diagram.png
 ├── monitoring/
-│   ├── prometheus.yml
-│   ├── alert-rules.yml
-│   └── grafana/
+│   ├── prometheus/
+│   │   ├── prometheus.yml
+│   │   └── alert-rules.yml
+│   └── README.md
+├── docs/
+│   ├── AWS_ARCHITECTURE.md
+│   ├── DEPLOYMENT.md
+│   ├── MONITORING_AND_OPERATIONS.md
+│   ├── SECURITY.md
+│   ├── TESTING.md
+│   ├── TROUBLESHOOTING.md
+│   ├── PROJECT_STATUS.md
+│   └── REPOSITORY_CHECKLIST.md
 ├── docker-compose.yml
 ├── deploy.sh
 ├── rollback.sh
@@ -63,143 +87,146 @@ TodoSummaryAssistant/
 └── MONITORING_AND_OPERATIONS.md
 ```
 
-## What was changed for DevOps enablement
+## 4. Local Prerequisites
 
-1. Spring Boot configuration now reads database, Cohere, Slack, port and CORS values from environment variables instead of hardcoded credentials.
-2. Spring Boot Actuator + Micrometer Prometheus were added to expose health and metrics. This is explicitly allowed by the assessment as DevOps enablement.
-3. The frontend API client uses `REACT_APP_API_BASE_URL`; production Docker builds use `/api`, so the browser talks to the same Nginx origin.
-4. Backend tests use an H2 test database so CI can run without a real RDS instance.
-5. Frontend and backend use multi-stage, non-root Docker images.
+For local DevOps validation, install:
 
-No business feature logic was intentionally changed.
+- Git
+- Java 17
+- Maven (or use the included Maven wrapper)
+- Node.js and npm
+- Docker and Docker Compose
 
-## CI/CD
+The production database is Amazon RDS. Do not run a production database inside Docker.
 
-On pull requests to `main`, GitHub Actions runs backend tests and a frontend production build.
+## 5. Environment Configuration
 
-On a push to `main`, it additionally:
+Use `.env.example` as the template. Create a local `.env` only when required and never commit it.
 
-1. Builds backend and frontend images.
-2. Tags each image with the immutable Git commit SHA and `latest`.
-3. Pushes both images to Docker Hub.
-4. SSHs to EC2.
-5. Retrieves runtime secrets from AWS Secrets Manager using the EC2 IAM role.
-6. Pulls the exact commit-SHA images.
-7. Starts/replaces the Compose services.
-8. Runs backend and frontend health checks.
-9. Fails the deployment if health checks fail and automatically attempts rollback to the previously recorded successful SHA.
+Important configuration includes:
 
-This is intentionally similar to the requested TaskFlow-style GitHub -> Docker Hub -> EC2 flow, but uses immutable SHA tags for safe rollback.
+- `SPRING_DATASOURCE_URL`
+- `SPRING_DATASOURCE_USERNAME`
+- `SPRING_DATASOURCE_PASSWORD`
+- `COHERE_API_KEY`
+- `SLACK_WEBHOOK_URL`
+- `CORS_ALLOWED_ORIGINS`
+- `DOCKERHUB_USERNAME`
+- `IMAGE_TAG`
 
-### GitHub secrets
+Production database credentials are retrieved by `deploy.sh` from AWS Secrets Manager and injected into the deployment environment.
 
-```text
-DOCKERHUB_USERNAME
-DOCKERHUB_TOKEN
-EC2_HOST
-EC2_USERNAME
-EC2_SSH_KEY
-```
-
-No database, Cohere, Slack or AWS access key is stored in GitHub.
-
-## Docker Hub repositories
-
-Create:
+## 6. CI/CD Flow
 
 ```text
-<dockerhub-user>/todo-summary-backend
-<dockerhub-user>/todo-summary-frontend
+Git Push / Pull Request
+          |
+          v
+   GitHub Actions
+          |
+   +------+------+
+   |             |
+Backend tests  Frontend build
+   |             |
+   +------+------+
+          |
+          v
+    Docker build
+          |
+          v
+   SHA-tagged images
+          |
+          v
+      Docker Hub
+          |
+          v
+         EC2
+          |
+       deploy.sh
+          |
+   Secrets Manager
+          |
+   Docker Compose
+          |
+   Health checks
+          |
+     +----+----+
+     |         |
+   PASS       FAIL
+     |         |
+     v         v
+ Success    Rollback
 ```
 
-## EC2 setup
+## 7. Production Deployment
 
-1. Launch Ubuntu EC2.
-2. Attach an IAM role that can read only the production Secrets Manager secret.
-3. Configure the EC2 security group.
-4. Run `aws/scripts/setup-ec2.sh`.
-5. Copy `docker-compose.yml`, `deploy.sh`, `rollback.sh` and `monitoring/` to `/opt/todo-summary-assistant`.
-6. Create `/opt/todo-summary-assistant/.env` with the Docker Hub username and secret ID:
-
-```env
-DOCKERHUB_USERNAME=your_dockerhub_username
-TODO_SECRET_ID=todo-summary-assistant/prod
-```
-
-7. Configure Nginx from `aws/nginx/todo-summary-assistant.conf`.
-
-Detailed AWS/RDS steps are in `aws/aws-setup.md`.
-
-## Local backend
-
-Prerequisites: JDK 17+, Maven wrapper and a MySQL instance. Copy `.env.example` values to your local environment and run:
+The normal deployment command on EC2 is:
 
 ```bash
-cd Backend/todo-summary-assistant
-./mvnw spring-boot:run
+cd /home/ubuntu/todolistassesment
+./deploy.sh <IMAGE_TAG>
 ```
 
-Backend: `http://localhost:8080`
-Health: `http://localhost:8080/actuator/health`
-Metrics: `http://localhost:8080/actuator/prometheus`
+Use the Git commit SHA as the image tag for deterministic deployments.
 
-## Local frontend
+Do not normally use `docker compose up -d` directly for application redeployment because database credentials are injected by `deploy.sh`.
 
-```bash
-cd Frontend/todo
-npm ci
-REACT_APP_API_BASE_URL=http://localhost:8080/api npm start
-```
-
-Frontend: `http://localhost:3000`
-
-## Local production-style containers
-
-For production, use RDS. The included `docker-compose.yml` is designed for EC2 and expects `.env.runtime`. Do not replace RDS with a database container for the production assessment deployment.
-
-## RDS
-
-Use MySQL on Amazon RDS, with public access disabled. Allow TCP 3306 only from the EC2 security group. Store the endpoint and credentials in Secrets Manager. Enable automated backups and document the restore process.
-
-## Monitoring
+## 8. Monitoring
 
 Prometheus scrapes:
-- Spring Boot `/actuator/prometheus`
-- Node Exporter
-- cAdvisor
 
-Grafana is provisioned with an operations dashboard. Alert rules cover backend availability, high CPU and low disk. See `MONITORING_AND_OPERATIONS.md`.
+- Spring Boot application metrics
+- Node Exporter host metrics
+- cAdvisor metrics where supported
 
-## Rollback
+Grafana currently covers:
 
-Every production image is tagged with the Git commit SHA. To roll back:
+- Backend availability
+- Request rate
+- Error rate
+- EC2 CPU
+- EC2 memory
+- EC2 disk
+- JVM heap
+- JVM threads
+- JVM garbage collection
 
-```bash
-cd /opt/todo-summary-assistant
-./rollback.sh <known-good-commit-sha>
-```
+The available Spring Boot metrics include request duration `sum`, `count`, and `max`. Histogram buckets are not currently exposed, so a true P95 latency query is not claimed. Average latency can be calculated from `sum / count` if a latency panel is required.
 
-See `FAILURE_AND_ROLLBACK.md` for all six required scenarios.
+## 9. Security Principles
 
-## Security notes
+- No production credentials in Git.
+- RDS is not publicly accessible.
+- RDS MySQL access is restricted to the EC2 security group.
+- EC2 uses an IAM role for Secrets Manager access.
+- Containers use non-root runtime users where configured.
+- Docker images are immutable by commit SHA for deployment traceability.
+- Monitoring/admin endpoints should remain restricted to approved access paths.
 
-- No real secrets belong in Git.
-- RDS is private.
-- EC2 IAM role is used for Secrets Manager access.
-- Containers run as non-root users.
-- Application ports are bound to localhost.
-- Only Nginx is intended to be internet-facing.
-- Docker Hub uses a scoped access token stored in GitHub Secrets.
+## 10. Documentation
 
-## Reverse proxy
+Start with [`PROJECT_DOCUMENTATION_INDEX.md`](PROJECT_DOCUMENTATION_INDEX.md), then review:
 
-Nginx runs on the EC2 host and is the public entry point. It proxies:
+1. `aws/aws-setup.md`
+2. `docs/AWS_ARCHITECTURE.md`
+3. `docs/DEPLOYMENT.md`
+4. `docs/MONITORING_AND_OPERATIONS.md`
+5. `FAILURE_AND_ROLLBACK.md`
+6. `docs/SECURITY.md`
+7. `docs/TESTING.md`
+8. `docs/TROUBLESHOOTING.md`
+9. `docs/PROJECT_STATUS.md`
+10. `docs/REPOSITORY_CHECKLIST.md`
 
-- `/` -> React frontend on `127.0.0.1:3000`
-- `/api/` -> Spring Boot backend on `127.0.0.1:8081`
+## 11. Important Submission Notes
 
-Configure it with `aws/scripts/configure-nginx.sh` after copying the repository to EC2. The application containers are never exposed directly to the Internet.
+The assessment asks for reproducibility, security, automation, observability, operational thinking, and documentation. Do not commit:
 
-## Deployment secrets
+- `.env` files containing real values
+- AWS access keys
+- SSH private keys
+- database passwords
+- API keys
+- Slack webhook URLs
 
-The EC2 deployment reads runtime secrets from AWS Secrets Manager using the instance IAM role. It creates `.env.runtime` for Spring Boot and `.env.grafana` for Grafana with mode `600`. No database password, API key, webhook, or AWS access key belongs in Git.
+The assessment also recommends documenting assumptions where an infrastructure detail is not explicitly specified.
